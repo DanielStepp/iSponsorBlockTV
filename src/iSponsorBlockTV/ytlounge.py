@@ -128,7 +128,7 @@ class YtLoungeApi(pyytlounge.YtLoungeApi):
             self._playback_state.currentTime = event.current_time
         if event.duration is not None:
             self._playback_state.duration = event.duration
-        if not self._ad_active and event.video_id and event.video_id != self._last_video_id:
+        if event.video_id and event.video_id != self._last_video_id:
             if self._pending_seek and event.video_id != self._pending_seek[0]:
                 self._pending_seek = None
             self._last_video_id = event.video_id
@@ -269,31 +269,23 @@ class YtLoungeApi(pyytlounge.YtLoungeApi):
         # (that way we can get the segments)
         if event_type == "onStateChange":
             data = args[0]
-            ad_detected = (
+            if (
                 data.get("state") == str(State.Advertisement.value)
                 or self._looks_like_ad_duration(data.get("duration"))
-            )
-            if ad_detected:
+            ):
                 self._ad_active = True
-                if self.mute_ads:
-                    self.logger.info("Ad detected, muting")
-                    await self.mute(True)
             # print(data)
             # Unmute when the video starts playing
             if self.mute_ads and not self._ad_active and data["state"] == "1":
                 create_task(self.mute(False, override=True))
         elif event_type == "nowPlaying":
             data = args[0]
-            ad_detected = (
+            if (
                 data.get("adState") == "1"
                 or data.get("adVideoId")
                 or self._looks_like_ad_duration(data.get("duration"))
-            )
-            if ad_detected:
+            ):
                 self._ad_active = True
-                if self.mute_ads:
-                    self.logger.info("Ad detected, muting")
-                    await self.mute(True)
             elif data.get("videoId") and data.get("duration") not in (None, "0", 0):
                 self._ad_active = False
             # Unmute when the video starts playing
@@ -309,16 +301,15 @@ class YtLoungeApi(pyytlounge.YtLoungeApi):
                 if data["currentTime"] != "0":
                     self.logger.info("Ad has ended, unmuting")
                     create_task(self.mute(False, override=True))
-            else:
-                self._ad_active = True
-                if self.skip_ads and data.get("isSkipEnabled") == "true":
-                    # YouTube uses strings for booleans.
-                    self.logger.info("Ad can be skipped, skipping")
-                    create_task(self.skip_ad())
-                    create_task(self.mute(False, override=True))
-                elif self.mute_ads:
-                    self.logger.info("Ad has started, muting")
-                    create_task(self.mute(True, override=True))
+            elif (
+                self.skip_ads and data.get("isSkipEnabled") == "true"
+            ):  # YouTube uses strings for booleans
+                self.logger.info("Ad can be skipped, skipping")
+                create_task(self.skip_ad())
+                create_task(self.mute(False, override=True))
+            elif self.mute_ads:  # Seen multiple other adStates, assuming they are all ads
+                self.logger.info("Ad has started, muting")
+                create_task(self.mute(True, override=True))
         # Manages volume, useful since YouTube wants to know the volume
         # when unmuting (even if they already have it)
         elif event_type == "onVolumeChanged":
@@ -413,13 +404,12 @@ class YtLoungeApi(pyytlounge.YtLoungeApi):
         else:
             mute_str = "false"
         if override or not self.volume_state.get("muted", "false") == mute_str:
+            self.volume_state["muted"] = mute_str
             # YouTube wants the volume when unmuting, so we send it
-            success = await self._command(
+            await self._command(
                 "setVolume",
                 {"volume": self.volume_state.get("volume", 100), "muted": mute_str},
             )
-            if success:
-                self.volume_state["muted"] = mute_str
 
     async def play_video(self, video_id: str, current_time: float | None = None) -> bool:
         self._pending_seek = None
