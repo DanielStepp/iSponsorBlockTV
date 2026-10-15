@@ -154,9 +154,9 @@ async def find_youtube_app(
 
     async with web_session.get(url_location, allow_redirects=False) as response:
         headers = response.headers
-        response = await response.text()
+        response_text = await response.text()
 
-    data = xmltodict.parse(response)
+    data = xmltodict.parse(response_text)
     name = data["root"]["device"]["friendlyName"]
     app_url = headers["application-url"]
     if not _url_matches_ip(app_url, expected_ip):

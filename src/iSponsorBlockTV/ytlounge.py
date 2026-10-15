@@ -79,12 +79,21 @@ class YtLoungeApi(pyytlounge.YtLoungeApi):
         self._last_content_playback_speed = 1.0
         self._last_playback_info_time = time.monotonic()
         self._has_content_playback_info = False
+        self.mute_ads = False
+        self.skip_ads = False
         if config:
             self.mute_ads = config.mute_ads
             self.skip_ads = config.skip_ads
             self.auto_play = config.auto_play
         self._command_mutex = asyncio.Lock()
         self._command_message_offset = 1
+
+    @staticmethod
+    def _to_float(value: Any, default: float = 0.0) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
 
     def _looks_like_ad_duration(self, duration: Any) -> bool:
         try:
@@ -181,6 +190,11 @@ class YtLoungeApi(pyytlounge.YtLoungeApi):
                 await self.play_video_and_force_seek(video_id, position)
             else:
                 await self.play_video(video_id, position)
+            # The ad is replaced by the content now. Unmute right away instead of
+            # waiting for the next playback event, otherwise the first moments of the
+            # content are silent if lags occur.
+            if self.mute_ads:
+                await self.mute(False, override=True)
         except asyncio.CancelledError:
             pass
 
@@ -288,7 +302,7 @@ class YtLoungeApi(pyytlounge.YtLoungeApi):
                     self.logger.info("Ad has ended, unmuting")
                     create_task(self.mute(False, override=True))
             elif (
-                self.skip_ads and data["isSkipEnabled"] == "true"
+                self.skip_ads and data.get("isSkipEnabled") == "true"
             ):  # YouTube uses strings for booleans
                 self.logger.info("Ad can be skipped, skipping")
                 create_task(self.skip_ad())
@@ -316,12 +330,12 @@ class YtLoungeApi(pyytlounge.YtLoungeApi):
                 create_task(self.api_helper.get_segments(self._last_video_id))
 
             if (
-                self.skip_ads and data["isSkipEnabled"] == "true"
+                self.skip_ads and data.get("isSkipEnabled") == "true"
             ):  # YouTube uses strings for booleans
                 self.logger.info("Ad can be skipped, skipping")
                 create_task(self.skip_ad())
                 create_task(self.mute(False, override=True))
-            elif self.skip_ads:  #and data["isSkippable"] == "false": # re-enable after testing
+            elif self.skip_ads:  # ad is not skippable -> replay content after ~5s
                 if self._ad_dance_task and not self._ad_dance_task.done():
                     self._ad_dance_task.cancel()
                 if self._last_video_id:
@@ -330,7 +344,7 @@ class YtLoungeApi(pyytlounge.YtLoungeApi):
                         self._replay_video_after_ad(
                             self._last_video_id,
                             self._position_before_ad(),
-                            max(0.0, 5.0 - float(data["currentTime"])),
+                            max(0.0, 5.0 - self._to_float(data.get("currentTime"))),
                         )
                     )
                 if self.mute_ads:
@@ -402,7 +416,7 @@ class YtLoungeApi(pyytlounge.YtLoungeApi):
         parameters: dict[str, Any] = {"videoId": video_id}
         if current_time is not None:
             parameters["currentTime"] = current_time
-            print(f"XXXPlaying video {video_id} from {current_time} seconds")
+            self.logger.debug("Playing video %s from %s seconds", video_id, current_time)
         return await self._command("setPlaylist", parameters)
 
     async def play_video_and_force_seek(self, video_id: str, current_time: float) -> bool:
@@ -540,7 +554,7 @@ class YtLoungeApi(pyytlounge.YtLoungeApi):
                 self._command_offset = 1
                 self._command_message_offset = 1
                 return self.connected()
-            except:
+            except Exception:
                 self._logger.exception(
                     "Handle connect failed, status %s reason %s",
                     resp.status,
@@ -579,10 +593,10 @@ class YtLoungeApi(pyytlounge.YtLoungeApi):
                 self.logger.error(
                     "Connected as screen: please force close the app on the device for iSponsorBlockTV to work properly"
                 )
-                self.logger.warn("Exiting in 5 seconds")
+                self.logger.warning("Exiting in 5 seconds")
                 await asyncio.sleep(5)
                 sys.exit(0)
-            except:
+            except Exception:
                 self._logger.exception(
                     "Handle connect failed, status %s reason %s",
                     resp.status,
