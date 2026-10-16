@@ -106,6 +106,17 @@ class YtLoungeApi(pyytlounge.YtLoungeApi):
             and duration < self._last_content_duration * self._AD_DURATION_RATIO
         )
 
+    def _mute_for_ad(self) -> None:
+        """Mute as soon as any event reliably signals an ad.
+
+        Without override this is a no-op when the device is already muted, so it is
+        cheap to call from every early ad signal (nowPlaying, onStateChange, ...).
+        The duration heuristic is deliberately not used here, since a false positive
+        would mute real content.
+        """
+        if self.mute_ads:
+            create_task(self.mute(True))
+
     async def _handle_playback_state_event(self, event: PlaybackStateEvent) -> None:
         self._playback_state.currentTime = event.current_time
         self._playback_state.duration = event.duration
@@ -269,10 +280,10 @@ class YtLoungeApi(pyytlounge.YtLoungeApi):
         # (that way we can get the segments)
         if event_type == "onStateChange":
             data = args[0]
-            if (
-                data.get("state") == str(State.Advertisement.value)
-                or self._looks_like_ad_duration(data.get("duration"))
-            ):
+            if data.get("state") == str(State.Advertisement.value):
+                self._ad_active = True
+                self._mute_for_ad()
+            elif self._looks_like_ad_duration(data.get("duration")):
                 self._ad_active = True
             # print(data)
             # Unmute when the video starts playing
@@ -280,11 +291,10 @@ class YtLoungeApi(pyytlounge.YtLoungeApi):
                 create_task(self.mute(False, override=True))
         elif event_type == "nowPlaying":
             data = args[0]
-            if (
-                data.get("adState") == "1"
-                or data.get("adVideoId")
-                or self._looks_like_ad_duration(data.get("duration"))
-            ):
+            if data.get("adState") == "1" or data.get("adVideoId"):
+                self._ad_active = True
+                self._mute_for_ad()
+            elif self._looks_like_ad_duration(data.get("duration")):
                 self._ad_active = True
             elif data.get("videoId") and data.get("duration") not in (None, "0", 0):
                 self._ad_active = False
