@@ -86,6 +86,8 @@ class YtLoungeApi(pyytlounge.YtLoungeApi):
         self._last_seek_time = 0.0
         self._last_seek_while_playing = False
         self._unmute_deferred = False
+        # True while the last mute command we sent was a mute (so an unmute is due).
+        self._muted_by_us = False
         self._unmute_timeout_task: asyncio.Task | None = None
         self._last_video_id = ""
         self._last_content_duration = 0.0
@@ -142,19 +144,25 @@ class YtLoungeApi(pyytlounge.YtLoungeApi):
         if self.mute_ads:
             create_task(self.mute(True))
 
+    def _visible_state(self, state: State) -> State:
+        """The state reported to listeners: an active ad hides the content state."""
+        return State.Advertisement if self._ad_active else state
+
+    def _remember_content_playback(self, position: float, duration: float | None) -> None:
+        """Remember where the content is, to restore it after a non-skippable ad."""
+        self._last_playback_position = position
+        self._last_content_playback_speed = self.playback_speed
+        self._last_playback_info_time = time.monotonic()
+        self._has_content_playback_info = True
+        if duration is not None and duration > 0:
+            self._last_content_duration = duration
+
     async def _handle_playback_state_event(self, event: PlaybackStateEvent) -> None:
         self._playback_state.currentTime = event.current_time
         self._playback_state.duration = event.duration
-        self._playback_state.state = (
-            State.Advertisement if self._ad_active else event.state
-        )
+        self._playback_state.state = self._visible_state(event.state)
         if not self._ad_active and event.state is State.Playing:
-            self._last_playback_position = event.current_time
-            self._last_content_playback_speed = self.playback_speed
-            self._last_playback_info_time = time.monotonic()
-            self._has_content_playback_info = True
-            if event.duration > 0:
-                self._last_content_duration = event.duration
+            self._remember_content_playback(event.current_time, event.duration)
         await self._seek_when_content_ready(event.state, event.current_time)
         if self._state_callback:
             await self._state_callback(self._playback_state)
@@ -172,20 +180,13 @@ class YtLoungeApi(pyytlounge.YtLoungeApi):
             self._last_playback_position = 0.0
             self._has_content_playback_info = False
         self._playback_state.videoId = self._last_video_id
-        self._playback_state.state = (
-            State.Advertisement if self._ad_active else event.state
-        )
+        self._playback_state.state = self._visible_state(event.state)
         if (
             not self._ad_active
             and event.current_time is not None
             and event.state is State.Playing
         ):
-            self._last_playback_position = event.current_time
-            self._last_content_playback_speed = self.playback_speed
-            self._last_playback_info_time = time.monotonic()
-            self._has_content_playback_info = True
-            if event.duration is not None and event.duration > 0:
-                self._last_content_duration = event.duration
+            self._remember_content_playback(event.current_time, event.duration)
         await self._seek_when_content_ready(event.state, event.current_time)
         if self._state_callback:
             await self._state_callback(self._playback_state)
@@ -205,7 +206,7 @@ class YtLoungeApi(pyytlounge.YtLoungeApi):
             self._unmute_deferred = False
             if self.mute_ads:
                 self.logger.info("Ad has ended, unmuting")
-                create_task(self.mute(False, override=True))
+                create_task(self.mute(False))
 
     def _unmute_after_ad(self) -> None:
         """Unmute after an ad, but not while a seek to the right position is pending.
@@ -222,7 +223,7 @@ class YtLoungeApi(pyytlounge.YtLoungeApi):
             self._unmute_timeout_task = create_task(self._unmute_timeout())
             return
         self.logger.info("Ad has ended, unmuting")
-        create_task(self.mute(False, override=True))
+        create_task(self.mute(False))
 
     async def _unmute_timeout(self) -> None:
         try:
@@ -386,129 +387,162 @@ class YtLoungeApi(pyytlounge.YtLoungeApi):
         self.subscribe_task_watchdog = asyncio.create_task(self._watchdog())
         return self.subscribe_task
 
+    # Lounge events handled here (before pyytlounge sees them), event type -> method name.
+    _EVENT_HANDLERS = {
+        "onStateChange": "_on_state_change",
+        "nowPlaying": "_on_now_playing",
+        "onAdStateChange": "_on_ad_state_change",
+        "adPlaying": "_on_ad_playing",
+        "onVolumeChanged": "_on_volume_changed",
+        "autoplayUpNext": "_on_autoplay_up_next",
+        "loungeStatus": "_on_lounge_status",
+        "onSubtitlesTrackChanged": "_on_subtitles_track_changed",
+        "loungeScreenDisconnected": "_on_lounge_screen_disconnected",
+        "onAutoplayModeChanged": "_on_autoplay_mode_changed",
+        "onPlaybackSpeedChanged": "_on_playback_speed_changed",
+    }
+
     # Process a lounge subscription event
-    # skipcq: PY-R1000
     async def _process_event(self, event_type: str, args: list[Any]):
         self.logger.debug(f"process_event({event_type}, {args})")
         # Update last event time for the watchdog
         self.last_event_time = asyncio.get_running_loop().time()
 
-        # A bunch of events useful to detect ads playing,
-        # and the next video before it starts playing
-        # (that way we can get the segments)
-        if event_type == "onStateChange":
-            data = args[0]
-            if data.get("state") == str(State.Advertisement.value):
-                self._set_ad_active()
-                self._mute_for_ad()
-            elif self._looks_like_ad_duration(data.get("duration")):
-                self._set_ad_active()
-            # print(data)
-            # Unmute when the video starts playing
-            if not self._ad_active and data.get("state") == "1":
-                self._unmute_after_ad()
-        elif event_type == "nowPlaying":
-            data = args[0]
-            if data.get("adState") == "1" or data.get("adVideoId"):
-                self._set_ad_active()
-                self._mute_for_ad()
-            elif self._looks_like_ad_duration(data.get("duration")):
-                self._set_ad_active()
-            elif data.get("videoId") and data.get("duration") not in (None, "0", 0):
-                self._ad_active = False
-            # Unmute when the video starts playing
-            if not self._ad_active and data.get("state", "0") == "1":
-                self._unmute_after_ad()
-        elif event_type == "onAdStateChange":
-            data = args[0]
-            if data["adState"] == "0":  # Ad is not playing
-                self._ad_active = False
-                if self._ad_dance_task and not self._ad_dance_task.done():
-                    self._ad_dance_task.cancel()
-                if data.get("currentTime") != "0":
-                    self._unmute_after_ad()
-            elif (
-                self.skip_ads and data.get("isSkipEnabled") == "true"
-            ):  # YouTube uses strings for booleans
-                self.logger.info("Ad can be skipped, skipping")
-                create_task(self.skip_ad())
-                create_task(self.mute(False, override=True))
-            elif self.mute_ads:  # Seen multiple other adStates, assuming they are all ads
-                self.logger.info("Ad has started, muting")
-                create_task(self.mute(True, override=True))
-        # Manages volume, useful since YouTube wants to know the volume
-        # when unmuting (even if they already have it)
-        elif event_type == "onVolumeChanged":
-            self.volume_state = args[0]
-        # Gets segments for the next video before it starts playing
-        elif event_type == "autoplayUpNext":
-            if len(args) > 0 and (vid_id := args[0]["videoId"]):  # if video id is not empty
-                self.logger.info(f"Getting segments for next video: {vid_id}")
-                create_task(self.api_helper.get_segments(vid_id))
-
-        # #Used to know if an ad is skippable or not
-        elif event_type == "adPlaying":
-            data = args[0]
-            self._set_ad_active()
-            # Gets segments for the next video (after the ad) before it starts playing
-            if self._last_video_id:
-                self.logger.info(f"Getting segments for next video: {self._last_video_id}")
-                create_task(self.api_helper.get_segments(self._last_video_id))
-
-            if (
-                self.skip_ads and data.get("isSkipEnabled") == "true"
-            ):  # YouTube uses strings for booleans
-                self.logger.info("Ad can be skipped, skipping")
-                create_task(self.skip_ad())
-                create_task(self.mute(False, override=True))
-            elif self.skip_ads:  # ad is not skippable -> replay content after ~5s
-                if self._ad_dance_task and not self._ad_dance_task.done():
-                    self._ad_dance_task.cancel()
-                if self._last_video_id:
-                    self.logger.info("Ad cannot be skipped, scheduling ad dance")
-                    self._ad_dance_task = create_task(
-                        self._replay_video_after_ad(
-                            self._last_video_id,
-                            self._position_before_ad(),
-                            max(0.0, 5.0 - self._to_float(data.get("currentTime"))),
-                        )
-                    )
-                if self.mute_ads:
-                    create_task(self.mute(True, override=True))
-            elif self.mute_ads:  # Seen multiple other adStates, assuming they are all ads
-                self.logger.info("Ad has started, muting")
-                create_task(self.mute(True, override=True))
-
-        elif event_type == "loungeStatus":
-            data = args[0]
-            devices = json.loads(data["devices"])
-            for device in devices:
-                if device["type"] == "LOUNGE_SCREEN":
-                    device_info = json.loads(device.get("deviceInfo", "{}"))
-                    if device_info.get("clientName", "") in youtube_client_blacklist:
-                        self._sid = None
-                        self._gsession = None  # Force disconnect
-                        return
-
-        elif event_type == "onSubtitlesTrackChanged":
-            if self.shorts_disconnected:
-                data = args[0]
-                video_id_saved = data.get("videoId", None)
-                self.shorts_disconnected = False
-                create_task(self.play_video(video_id_saved))
-        elif event_type == "loungeScreenDisconnected":
-            if args:  # Sometimes it's empty
-                data = args[0]
-                if data["reason"] == "disconnectedByUserScreenInitiated":  # Short playing?
-                    self.shorts_disconnected = True
-        elif event_type == "onAutoplayModeChanged":
-            create_task(self.set_auto_play_mode(self.auto_play))
-
-        elif event_type == "onPlaybackSpeedChanged":
-            data = args[0]
-            self.playback_speed = float(data.get("playbackSpeed", "1"))
+        handler_name = self._EVENT_HANDLERS.get(event_type)
+        if handler_name and getattr(self, handler_name)(args):
+            return  # handler asked to drop the event
 
         await super()._process_event(event_type, args)
+
+    # --- ad detection ---------------------------------------------------------------
+    # onStateChange, nowPlaying and onAdStateChange are useful to detect ads playing,
+    # and the next video before it starts playing (that way we can get the segments).
+
+    def _on_state_change(self, args: list[Any]) -> None:
+        data = args[0]
+        if data.get("state") == str(State.Advertisement.value):
+            self._set_ad_active()
+            self._mute_for_ad()
+        elif self._looks_like_ad_duration(data.get("duration")):
+            self._set_ad_active()
+        # Unmute when the video starts playing
+        if not self._ad_active and data.get("state") == "1":
+            self._unmute_after_ad()
+
+    def _on_now_playing(self, args: list[Any]) -> None:
+        data = args[0]
+        if data.get("adState") == "1" or data.get("adVideoId"):
+            self._set_ad_active()
+            self._mute_for_ad()
+        elif self._looks_like_ad_duration(data.get("duration")):
+            self._set_ad_active()
+        elif data.get("videoId") and data.get("duration") not in (None, "0", 0):
+            self._ad_active = False
+        # Unmute when the video starts playing
+        if not self._ad_active and data.get("state", "0") == "1":
+            self._unmute_after_ad()
+
+    def _on_ad_state_change(self, args: list[Any]) -> None:
+        data = args[0]
+        if data["adState"] == "0":  # Ad is not playing
+            self._ad_active = False
+            self._cancel_ad_dance()
+            if data.get("currentTime") != "0":
+                self._unmute_after_ad()
+        elif self._can_skip_ad(data):
+            self._skip_ad_now()
+        elif self.mute_ads:  # Seen multiple other adStates, assuming they are all ads
+            self._mute_ad_started()
+
+    # Used to know if an ad is skippable or not
+    def _on_ad_playing(self, args: list[Any]) -> None:
+        data = args[0]
+        self._set_ad_active()
+        # Gets segments for the next video (after the ad) before it starts playing
+        if self._last_video_id:
+            self.logger.info(f"Getting segments for next video: {self._last_video_id}")
+            create_task(self.api_helper.get_segments(self._last_video_id))
+
+        if self._can_skip_ad(data):
+            self._skip_ad_now()
+        elif self.skip_ads:  # ad is not skippable -> replay content after ~5s
+            self._schedule_ad_dance(data)
+            if self.mute_ads:
+                create_task(self.mute(True))
+        elif self.mute_ads:  # Seen multiple other adStates, assuming they are all ads
+            self._mute_ad_started()
+
+    def _can_skip_ad(self, data: dict[str, Any]) -> bool:
+        # YouTube uses strings for booleans
+        return bool(self.skip_ads) and data.get("isSkipEnabled") == "true"
+
+    def _skip_ad_now(self) -> None:
+        self.logger.info("Ad can be skipped, skipping")
+        create_task(self.skip_ad())
+        create_task(self.mute(False))
+
+    def _mute_ad_started(self) -> None:
+        self.logger.info("Ad has started, muting")
+        create_task(self.mute(True))
+
+    def _cancel_ad_dance(self) -> None:
+        if self._ad_dance_task and not self._ad_dance_task.done():
+            self._ad_dance_task.cancel()
+
+    def _schedule_ad_dance(self, data: dict[str, Any]) -> None:
+        """Replay the content from where it was once the ad has been playing ~5 seconds."""
+        self._cancel_ad_dance()
+        if not self._last_video_id:
+            return
+        self.logger.info("Ad cannot be skipped, scheduling ad dance")
+        wait_time = max(0.0, 5.0 - self._to_float(data.get("currentTime")))
+        self._ad_dance_task = create_task(
+            self._replay_video_after_ad(
+                self._last_video_id, self._position_before_ad(), wait_time
+            )
+        )
+
+    # --- other lounge events ---------------------------------------------------------
+
+    # Manages volume, useful since YouTube wants to know the volume
+    # when unmuting (even if they already have it)
+    def _on_volume_changed(self, args: list[Any]) -> None:
+        self.volume_state = args[0]
+
+    # Gets segments for the next video before it starts playing
+    def _on_autoplay_up_next(self, args: list[Any]) -> None:
+        if len(args) > 0 and (vid_id := args[0]["videoId"]):  # if video id is not empty
+            self.logger.info(f"Getting segments for next video: {vid_id}")
+            create_task(self.api_helper.get_segments(vid_id))
+
+    def _on_lounge_status(self, args: list[Any]) -> bool:
+        """Returns True (and forces a disconnect) when a blacklisted client is connected."""
+        devices = json.loads(args[0]["devices"])
+        for device in devices:
+            if device["type"] == "LOUNGE_SCREEN":
+                device_info = json.loads(device.get("deviceInfo", "{}"))
+                if device_info.get("clientName", "") in youtube_client_blacklist:
+                    self._sid = None
+                    self._gsession = None  # Force disconnect
+                    return True
+        return False
+
+    def _on_subtitles_track_changed(self, args: list[Any]) -> None:
+        if self.shorts_disconnected:
+            video_id_saved = args[0].get("videoId", None)
+            self.shorts_disconnected = False
+            create_task(self.play_video(video_id_saved))
+
+    def _on_lounge_screen_disconnected(self, args: list[Any]) -> None:
+        if args:  # Sometimes it's empty
+            if args[0]["reason"] == "disconnectedByUserScreenInitiated":  # Short playing?
+                self.shorts_disconnected = True
+
+    def _on_autoplay_mode_changed(self, args: list[Any]) -> None:
+        create_task(self.set_auto_play_mode(self.auto_play))
+
+    def _on_playback_speed_changed(self, args: list[Any]) -> None:
+        self.playback_speed = float(args[0].get("playbackSpeed", "1"))
 
     # Set the volume to a specific value (0-100)
     async def set_volume(self, volume: int) -> None:
@@ -516,8 +550,12 @@ class YtLoungeApi(pyytlounge.YtLoungeApi):
 
     async def mute(self, mute: bool, override: bool = False) -> None:
         """
-        Mute or unmute the device (if the device already
-        is in the desired state, nothing happens)
+        Mute or unmute the device.
+
+        Every command is a request to YouTube and commands are sent one after another,
+        so redundant ones delay the important ones. The command is therefore skipped
+        when the device is already known to be in the desired state. After we muted the
+        device, an unmute is always sent.
 
         :param bool mute: True to mute, False to unmute
         :param bool override: If True, the command is sent even if the
@@ -525,17 +563,35 @@ class YtLoungeApi(pyytlounge.YtLoungeApi):
 
         TODO: Only works if the device is subscribed to the lounge
         """
-        if mute:
-            mute_str = "true"
-        else:
-            mute_str = "false"
-        if override or not self.volume_state.get("muted", "false") == mute_str:
-            self.volume_state["muted"] = mute_str
+        mute_str = "true" if mute else "false"
+        needed = self.volume_state.get("muted") != mute_str or (not mute and self._muted_by_us)
+        if not (override or needed):
+            return
+        had_state = "muted" in self.volume_state
+        previous_state = self.volume_state.get("muted")
+        previous_flag = self._muted_by_us
+        self.volume_state["muted"] = mute_str
+        self._muted_by_us = mute
+
+        def revert() -> None:
+            # Don't believe in a state the device never got
+            if had_state:
+                self.volume_state["muted"] = previous_state
+            else:
+                self.volume_state.pop("muted", None)
+            self._muted_by_us = previous_flag
+
+        try:
             # YouTube wants the volume when unmuting, so we send it
-            await self._command(
+            success = await self._command(
                 "setVolume",
                 {"volume": self.volume_state.get("volume", 100), "muted": mute_str},
             )
+        except BaseException:
+            revert()
+            raise
+        if not success:
+            revert()
 
     async def play_video(self, video_id: str, current_time: float | None = None) -> bool:
         self._clear_pending_seek()
@@ -548,7 +604,9 @@ class YtLoungeApi(pyytlounge.YtLoungeApi):
     async def play_video_and_force_seek(self, video_id: str, current_time: float) -> bool:
         """Load a video, then seek once its content reports playing."""
         if current_time == 0:
-            self.logger.debug("Force seek to 0 seconds for video %s, sending only setPlaylist", video_id)
+            self.logger.debug(
+                "Force seek to 0 seconds for video %s, sending only setPlaylist", video_id
+            )
             return await self.play_video(video_id, current_time)
         self.logger.debug(
             "Waiting for video %s to play before seeking to %.2f seconds", video_id, current_time
@@ -717,7 +775,8 @@ class YtLoungeApi(pyytlounge.YtLoungeApi):
             try:
                 await resp.text()
                 self.logger.error(
-                    "Connected as screen: please force close the app on the device for iSponsorBlockTV to work properly"
+                    "Connected as screen: please force close the app on the device "
+                    "for iSponsorBlockTV to work properly"
                 )
                 self.logger.warning("Exiting in 5 seconds")
                 await asyncio.sleep(5)
