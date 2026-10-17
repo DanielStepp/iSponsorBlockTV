@@ -48,7 +48,8 @@ class YtLoungeApi(pyytlounge.YtLoungeApi):
     _SEEK_MAX_ATTEMPTS = 3
     _SEEK_RETRY_INTERVAL = 1.0
     # Never stay muted longer than this while waiting for the seek to be confirmed.
-    _SEEK_UNMUTE_TIMEOUT = 3.0
+    # 0 disables the wait: unmute as soon as the content is replayed.
+    _SEEK_UNMUTE_TIMEOUT = 1.5
 
     def __init__(
         self,
@@ -133,7 +134,7 @@ class YtLoungeApi(pyytlounge.YtLoungeApi):
             self.logger.debug("Ad detected, content position %.2f", self._ad_started_position)
         self._ad_active = True
 
-    def _mute_for_ad(self) -> None:
+    def _mute_for_ad(self, reason: str = "") -> None:
         """Mute as soon as any event reliably signals an ad.
 
         Without override this is a no-op when the device is already muted, so it is
@@ -142,6 +143,7 @@ class YtLoungeApi(pyytlounge.YtLoungeApi):
         would mute real content.
         """
         if self.mute_ads:
+            self.logger.info("Early ad signal (%s), muting", reason)
             create_task(self.mute(True))
 
     def _visible_state(self, state: State) -> State:
@@ -216,7 +218,7 @@ class YtLoungeApi(pyytlounge.YtLoungeApi):
         """
         if not self.mute_ads:
             return
-        if self._pending_seek:
+        if self._pending_seek and self._SEEK_UNMUTE_TIMEOUT > 0:
             self._unmute_deferred = True
             if self._unmute_timeout_task and not self._unmute_timeout_task.done():
                 self._unmute_timeout_task.cancel()
@@ -422,7 +424,7 @@ class YtLoungeApi(pyytlounge.YtLoungeApi):
         data = args[0]
         if data.get("state") == str(State.Advertisement.value):
             self._set_ad_active()
-            self._mute_for_ad()
+            self._mute_for_ad("onStateChange")
         elif self._looks_like_ad_duration(data.get("duration")):
             self._set_ad_active()
         # Unmute when the video starts playing
@@ -433,7 +435,7 @@ class YtLoungeApi(pyytlounge.YtLoungeApi):
         data = args[0]
         if data.get("adState") == "1" or data.get("adVideoId"):
             self._set_ad_active()
-            self._mute_for_ad()
+            self._mute_for_ad("nowPlaying")
         elif self._looks_like_ad_duration(data.get("duration")):
             self._set_ad_active()
         elif data.get("videoId") and data.get("duration") not in (None, "0", 0):
@@ -581,6 +583,7 @@ class YtLoungeApi(pyytlounge.YtLoungeApi):
                 self.volume_state.pop("muted", None)
             self._muted_by_us = previous_flag
 
+        started = time.monotonic()
         try:
             # YouTube wants the volume when unmuting, so we send it
             success = await self._command(
@@ -592,6 +595,12 @@ class YtLoungeApi(pyytlounge.YtLoungeApi):
             raise
         if not success:
             revert()
+        else:
+            # Includes the time spent waiting for earlier commands to finish
+            self.logger.info(
+                "%s command done after %.0f ms", "Mute" if mute else "Unmute",
+                (time.monotonic() - started) * 1000,
+            )
 
     async def play_video(self, video_id: str, current_time: float | None = None) -> bool:
         self._clear_pending_seek()
