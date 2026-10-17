@@ -7,7 +7,7 @@ import time
 import rich_click as click
 from appdirs import user_data_dir
 
-from . import config_setup, main, setup_wizard
+from . import config_setup, main, setup_wizard, webui
 from .constants import config_file_blacklist_keys, github_wiki_base_url, SponsorBlock_api
 
 
@@ -213,6 +213,19 @@ def setup_cli_command(ctx):
     """Setup the program in the command line"""
     config = Config(ctx.obj["data_dir"])
     config_setup.main(config, ctx.obj["debug"])
+
+
+@cli.command(name="webui")
+@click.option(
+    "--port",
+    type=int,
+    default=lambda: int(os.getenv("iSPBTV_webui_port") or 8080),
+    help="port of the web UI (default 8080)",
+)
+@click.pass_context
+def webui_command(ctx, port):
+    """Run only the web UI to edit the config (no devices needed)"""
+    webui.run_standalone(Config(ctx.obj["data_dir"]), port)
 
 
 @cli.command()

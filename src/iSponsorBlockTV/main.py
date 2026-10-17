@@ -6,7 +6,7 @@ from typing import Optional
 
 import aiohttp
 
-from . import api_helpers, ytlounge
+from . import api_helpers, webui, ytlounge
 from .debug_helpers import AiohttpTracer
 
 
@@ -179,6 +179,8 @@ async def main_async(config, debug, http_tracing):
         web_session = aiohttp.ClientSession(trust_env=config.use_proxy, connector=tcp_connector)
 
     api_helper = api_helpers.ApiHelper(config, web_session)
+    # Optional web UI to edit the config (enabled with iSPBTV_webui_port)
+    webui_runner = await webui.start_from_env(config.config_file, api_helper)
     for i in config.devices:
         device = DeviceListener(api_helper, config, i, debug, web_session)
         devices.append(device)
@@ -196,6 +198,8 @@ async def main_async(config, debug, http_tracing):
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
     finally:
+        if webui_runner:
+            await webui_runner.cleanup()
         await web_session.close()
         await tcp_connector.close()
         print("Exited")
