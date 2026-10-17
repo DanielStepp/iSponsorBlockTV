@@ -58,6 +58,38 @@ during setup.
 The device can also be manually added to iSponsorBlockTV with a YouTube TV code.
 This code can be found in the settings page of your YouTube TV application.
 
+## Web UI
+
+The config can be edited in the browser. It is off by default and enabled with
+environment variables:
+
+| Variable | Meaning |
+| --- | --- |
+| `iSPBTV_webui_port` | Port of the web UI. Setting it enables the web UI. |
+| `iSPBTV_webui_password` | Password (HTTP basic auth, any user name). Strongly recommended, the config contains the YouTube API key. |
+| `iSPBTV_webui_host` | Address to bind to, default `0.0.0.0`. |
+
+```yaml
+services:
+  isponsorblocktv:
+    image: ghcr.io/dmunozv04/isponsorblocktv
+    network_mode: host
+    environment:
+      - iSPBTV_webui_port=8080
+      - iSPBTV_webui_password=change-me
+    volumes:
+      - /PATH_TO_YOUR_DATA_DIR:/app/data
+```
+
+Without `network_mode: host`, publish the port instead (`ports: ["8080:8080"]`).
+Open `http://<host>:8080`. Changes are written to `config.json` and apply after a
+restart; "Save and restart" does this for you (in Docker the container restarts
+automatically with `restart: unless-stopped`). Devices can be paired with a TV code
+directly in the UI.
+
+For the first setup, when there are no devices yet, run only the web UI with
+`iSponsorBlockTV webui --port 8080` (in Docker: `docker run ... <image> webui`).
+
 ## Libraries used
 
 - [pyytlounge](https://github.com/FabioGNR/pyytlounge) Used to interact with the

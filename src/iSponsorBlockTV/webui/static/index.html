@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>iSponsorBlockTV – Settings</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/static/style.css">
+  <script type="module" src="/static/js/app.js"></script>
+</head>
+<body>
+  <main>
+    <h1>iSponsorBlockTV</h1>
+    <p class="subtitle">Settings. Changes take effect after the program restarts.</p>
+
+    <p id="warning" class="warning" hidden>
+      This page is not password protected. Set <code>iSPBTV_webui_password</code> so that
+      nobody on your network can change the settings.
+    </p>
+
+    <section>
+      <h2>Devices</h2>
+      <div id="devices"></div>
+      <button id="add-device" type="button">+ Add device manually</button>
+      <div id="pairing" class="pairing">
+        <input id="pairing-code" type="text" inputmode="numeric"
+               placeholder="Pairing code from the TV" aria-label="Pairing code">
+        <button id="pair" type="button">Pair</button>
+      </div>
+      <p class="hint">
+        You can find the code in the YouTube app on the TV under Settings &rarr; Link with TV
+        code. The offset is given in milliseconds.
+      </p>
+    </section>
+
+    <section>
+      <h2>Ads</h2>
+      <label class="check"><input type="checkbox" id="skip_ads"> Skip ads</label>
+      <label class="check"><input type="checkbox" id="mute_ads"> Mute the sound during ads</label>
+    </section>
+
+    <section>
+      <h2>Segments to skip</h2>
+      <div id="categories" class="grid"></div>
+      <label for="minimum_skip_length">Minimum segment length (seconds)</label>
+      <input type="number" id="minimum_skip_length" min="0" step="0.1">
+    </section>
+
+    <section>
+      <h2>General</h2>
+      <label class="check"><input type="checkbox" id="auto_play"> Enable autoplay</label>
+      <label class="check">
+        <input type="checkbox" id="skip_count_tracking"> Report skipped segments to SponsorBlock
+      </label>
+      <label class="check">
+        <input type="checkbox" id="use_proxy"> Use the proxy from the environment
+      </label>
+      <label for="join_name">Name shown on the TV</label>
+      <input type="text" id="join_name" maxlength="64">
+      <label for="sponsorblock_api_url">SponsorBlock API</label>
+      <input type="url" id="sponsorblock_api_url">
+    </section>
+
+    <section>
+      <h2>YouTube API and channel whitelist</h2>
+      <label for="apikey">API key</label>
+      <input type="password" id="apikey" autocomplete="off">
+      <p id="apikey-hint" class="hint"></p>
+      <label class="check"><input type="checkbox" id="clear_apikey"> Remove the API key</label>
+      <label>Channels where nothing is skipped</label>
+      <div id="whitelist"></div>
+      <button id="add-channel" type="button">+ Add channel</button>
+    </section>
+  </main>
+
+  <footer class="actionbar">
+    <div>
+      <span id="status" role="status"></span>
+      <button id="save" class="primary" type="button">Save</button>
+      <button id="save-restart" type="button" hidden>Save and restart</button>
+    </div>
+  </footer>
+</body>
+</html>
