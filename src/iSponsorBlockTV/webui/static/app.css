@@ -1,0 +1,236 @@
+/* iSponsorBlockTV web UI */
+
+/* ---------- Theme ---------- */
+
+:root {
+  --bg: #f5f6f8;
+  --card: #fff;
+  --text: #1b1f24;
+  --muted: #667085;
+  --line: #e1e4e8;
+  --accent: #2f6fed;
+  --accent-text: #fff;
+  --danger: #c62828;
+  --success: #2e7d32;
+  --warning-bg: #fff4e5;
+  --warning-text: #7a4b00;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14161a;
+    --card: #1e2127;
+    --text: #e8eaed;
+    --muted: #9aa3af;
+    --line: #2f343c;
+    --accent: #5b8def;
+    --accent-text: #0d1117;
+    --danger: #ef6b6b;
+    --success: #6fcf7a;
+    --warning-bg: #3a2e17;
+    --warning-text: #f3c98b;
+  }
+}
+
+/* ---------- Base ---------- */
+
+* {
+  box-sizing: border-box;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+main {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 20px 16px 110px; /* bottom: room for the action bar */
+}
+
+h1 {
+  margin: 0 0 4px;
+  font-size: 1.35rem;
+}
+
+h2 {
+  margin: 0 0 10px;
+  font-size: 1rem;
+}
+
+.subtitle {
+  margin: 0 0 18px;
+  color: var(--muted);
+}
+
+.hint {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.warning {
+  margin: 0 0 14px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--warning-bg);
+  color: var(--warning-text);
+  font-size: 0.9rem;
+}
+
+/* ---------- Cards and layout ---------- */
+
+.card {
+  margin: 0 0 14px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card);
+}
+
+.category-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 2px 14px;
+}
+
+/* A row of inputs, e.g. one device or one channel */
+.row {
+  display: grid;
+  gap: 8px;
+  align-items: center;
+  margin: 6px 0;
+}
+
+.row-device {
+  grid-template-columns: 1fr 1.4fr 90px auto;
+}
+
+.row-channel {
+  grid-template-columns: 1.4fr 1fr auto;
+}
+
+.pair-box {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+/* ---------- Form controls ---------- */
+
+label,
+.label {
+  display: block;
+  margin: 10px 0 4px;
+  font-weight: 500;
+}
+
+.checkbox {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 0;
+  font-weight: 400;
+}
+
+.checkbox input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+}
+
+input[type="text"],
+input[type="number"],
+input[type="password"],
+input[type="url"] {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+
+input:focus,
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+button {
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+button.primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
+button.danger {
+  color: var(--danger);
+}
+
+/* ---------- Action bar (always visible at the bottom) ---------- */
+
+.action-bar {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  padding: 10px 16px;
+  border-top: 1px solid var(--line);
+  background: var(--card);
+}
+
+.action-bar-content {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  max-width: 760px;
+  margin: 0 auto;
+}
+
+#status {
+  flex: 1;
+  min-width: 140px;
+  font-size: 0.9rem;
+}
+
+#status.error {
+  color: var(--danger);
+}
+
+#status.success {
+  color: var(--success);
+}
+
+/* ---------- Small screens ---------- */
+
+@media (max-width: 560px) {
+  .row-device,
+  .row-channel {
+    grid-template-columns: 1fr 1fr;
+  }
+}

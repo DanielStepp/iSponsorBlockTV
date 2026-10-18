@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>iSponsorBlockTV – Settings</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <main>
+    <h1>iSponsorBlockTV</h1>
+    <p class="subtitle">Settings. Changes take effect after the program restarts.</p>
+    <p id="password-warning" class="warning" hidden>
+      This page is not password protected. Set <code>iSPBTV_webui_password</code> so that
+      nobody on your network can change the settings.
+    </p>
+
+    <section class="card">
+      <h2>Devices</h2>
+      <div id="devices"></div>
+      <p id="no-devices" class="hint" hidden>No device added yet.</p>
+      <button id="add-device" type="button">+ Add device manually</button>
+      <div id="pair-box" class="pair-box">
+        <input type="text" id="pair-code" inputmode="numeric"
+               placeholder="Pairing code from the TV" aria-label="Pairing code">
+        <button id="pair-button" type="button">Pair</button>
+      </div>
+      <p class="hint">
+        You can find the code in the YouTube app on the TV under
+        Settings &rarr; Link with TV code. The offset is given in milliseconds.
+      </p>
+    </section>
+
+    <section class="card">
+      <h2>Ads</h2>
+      <label class="checkbox"><input type="checkbox" data-setting="skip_ads"> Skip ads</label>
+      <label class="checkbox">
+        <input type="checkbox" data-setting="mute_ads"> Mute the sound during ads
+      </label>
+    </section>
+
+    <section class="card">
+      <h2>Segments to skip</h2>
+      <div id="categories" class="category-grid"></div>
+      <label for="minimum-skip-length">Minimum segment length (seconds)</label>
+      <input type="number" id="minimum-skip-length" data-setting="minimum_skip_length"
+             min="0" step="0.1">
+    </section>
+
+    <section class="card">
+      <h2>General</h2>
+      <label class="checkbox">
+        <input type="checkbox" data-setting="auto_play"> Enable autoplay
+      </label>
+      <label class="checkbox">
+        <input type="checkbox" data-setting="skip_count_tracking">
+        Report skipped segments to SponsorBlock
+      </label>
+      <label class="checkbox">
+        <input type="checkbox" data-setting="use_proxy"> Use the proxy from the environment
+      </label>
+      <label for="join-name">Name shown on the TV</label>
+      <input type="text" id="join-name" data-setting="join_name" maxlength="64">
+      <label for="api-url">SponsorBlock API</label>
+      <input type="url" id="api-url" data-setting="sponsorblock_api_url">
+    </section>
+
+    <section class="card">
+      <h2>YouTube API and channel whitelist</h2>
+      <label for="api-key">API key</label>
+      <input type="password" id="api-key" data-setting="apikey" autocomplete="off">
+      <p id="api-key-hint" class="hint"></p>
+      <label class="checkbox">
+        <input type="checkbox" data-setting="clear_apikey"> Remove the API key
+      </label>
+      <p class="label">Channels where nothing is skipped</p>
+      <div id="channels"></div>
+      <button id="add-channel" type="button">+ Add channel</button>
+    </section>
+  </main>
+
+  <footer class="action-bar">
+    <div class="action-bar-content">
+      <span id="status" role="status"></span>
+      <button id="save" class="primary" type="button">Save</button>
+      <button id="save-restart" type="button" hidden>Save and restart</button>
+    </div>
+  </footer>
+
+  <!-- Rows and checkboxes are cloned from these templates by app.js -->
+  <template id="tpl-device">
+    <div class="row row-device">
+      <input type="text" data-field="name" placeholder="Name" aria-label="Name">
+      <input type="text" data-field="screen_id" placeholder="Screen ID" aria-label="Screen ID">
+      <input type="number" data-field="offset" placeholder="0" aria-label="Offset in ms">
+      <button type="button" class="danger" data-action="remove">Remove</button>
+    </div>
+  </template>
+
+  <template id="tpl-channel">
+    <div class="row row-channel">
+      <input type="text" data-field="id" placeholder="Channel ID" aria-label="Channel ID">
+      <input type="text" data-field="name" placeholder="Name" aria-label="Channel name">
+      <button type="button" class="danger" data-action="remove">Remove</button>
+    </div>
+  </template>
+
+  <template id="tpl-category">
+    <label class="checkbox"><input type="checkbox"><span></span></label>
+  </template>
+</body>
+</html>
